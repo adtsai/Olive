@@ -14,7 +14,23 @@ python -m pip install -r requirements.txt
 ```
 
 ## Run sample
-### Run with both Intel® Neural Compressor static and dynamic quantization
+### Run Intel® Neural Compressor quantization with or without accuracy aware tuning
+
+Accuracy aware tuning is one of unique features provided by Intel® Neural Compressor quantization. This feature can be used to solve accuracy loss pain points brought by applying low precision quantization and other lossy optimization methods. Intel® Neural Compressor also support to quantize all quantizable ops without accuracy tuning, user can decide whether to tune the model accuracy or not. Please check the [doc](https://github.com/intel/neural-compressor/blob/master/docs/source/quantization.md) for more details.
+
+User can decide to tune the model accuracy by setting 'evaluate_func'. If not set, accuracy of the model will not be tuned.
+
+```json
+"quantization": {
+    "type": "IncQuantization",
+    "config": {
+        "user_script": "user_script.py",
+        "evaluate_func": "eval_accuracy",
+    }
+}
+```
+
+#### Example
 First, install required packages according to passes.
 ```
 python -m olive.workflows.run --config bert_inc_config.json --setup

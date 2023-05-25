@@ -3,13 +3,18 @@
 # Licensed under the MIT License.
 # --------------------------------------------------------------------------
 import numpy as np
+import onnxruntime
 import torch
 import transformers
 from datasets import load_dataset
 from datasets.utils.logging import disable_progress_bar
+from evaluate import load
 from neural_compressor.data import DefaultDataLoader
 from torch.utils.data import Dataset
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction
+from transformers.trainer_pt_utils import nested_concat
+
+from olive.model import OliveModel
 
 disable_progress_bar()
 
@@ -127,3 +132,41 @@ def inc_glue_calibration_reader(data_dir, batch_size=1):
     bert_dataset = IncBertDataset(bert_dataset.get_eval_dataset())
     calib_dataloader = DefaultDataLoader(dataset=bert_dataset, batch_size=batch_size)
     return calib_dataloader
+
+
+def compute_metrics(p: EvalPrediction):
+    metric = load("glue", "mrpc")
+    preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
+    preds = np.argmax(preds, axis=1)
+    result = metric.compute(predictions=preds, references=p.label_ids)
+    if len(result) > 1:
+        result["combined_score"] = np.mean(list(result.values())).item()
+    return result
+
+
+def eval_accuracy(model, *args):
+    bert_dataset = BertDataset("Intel/bert-base-uncased-mrpc")
+    bert_dataset = IncBertDataset(bert_dataset.get_eval_dataset())
+
+    if isinstance(model, OliveModel):
+        _, batch_size, device, execution_providers = args
+        session = model.prepare_session(inference_settings=None, device=device, execution_providers=execution_providers)
+        bert_dataloader = DefaultDataLoader(dataset=bert_dataset, batch_size=batch_size)
+    else:
+        session = onnxruntime.InferenceSession(
+            model.SerializeToString(), providers=onnxruntime.get_available_providers()
+        )
+        bert_dataloader = DefaultDataLoader(dataset=bert_dataset, batch_size=1)
+    onnx_input_names = {input_key.name: idx for idx, input_key in enumerate(session.get_inputs())}
+    all_preds = None
+    all_labels = None
+    for step, (inputs, labels) in enumerate(bert_dataloader):
+        labels = np.array(labels)
+        onnx_inputs = {key: np.array(inputs[key]) for key in onnx_input_names if key in inputs}
+        preds = session.run(None, onnx_inputs)
+        if len(preds) == 1:
+            preds = preds[0]
+        all_preds = preds if all_preds is None else nested_concat(all_preds, preds, padding_index=-100)
+        all_labels = labels if all_labels is None else nested_concat(all_labels, labels, padding_index=-100)
+    metrics = compute_metrics(EvalPrediction(predictions=all_preds, label_ids=all_labels))
+    return metrics["accuracy"]
