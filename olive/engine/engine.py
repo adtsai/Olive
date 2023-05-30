@@ -813,6 +813,11 @@ class Engine:
         """
         # pass
         p: Pass = self.passes[pass_id]["pass"]
+
+        # set evaluator to pass
+        if self.passes[pass_id]["evaluator"] is not None:
+            p.set_evaluator(self.passes[pass_id]["evaluator"])
+        
         pass_name = p.__class__.__name__
         pass_config = p.config_at_search_point(pass_search_point)
         pass_config = p.serialize_config(pass_config)

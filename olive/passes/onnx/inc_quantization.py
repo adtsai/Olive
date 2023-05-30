@@ -6,6 +6,8 @@ import logging
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Dict, Union
+import onnxruntime
+import torch
 
 from olive.hardware.accelerator import AcceleratorSpec
 from olive.model import ONNXModel
@@ -13,6 +15,7 @@ from olive.passes import Pass
 from olive.passes.onnx.common import get_external_data_config, model_proto_to_olive_model
 from olive.passes.pass_config import PassConfigParam
 from olive.strategy.search_parameter import Boolean, Categorical, Conditional
+from olive.evaluator.olive_evaluator import OliveEvaluator, OnnxEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +105,6 @@ _inc_quantization_config = {
             implementation and installed mpi4py.
         """,
     ),
-    "accuracy_criterion": PassConfigParam(
-        type_=dict,
-        default_value={},
-        description="""
-            Instance of AccuracyCriterion class. In this class you can set higher_is_better,
-            criterion and tolerable_loss.
-        """,
-    ),
     "tuning_criterion": PassConfigParam(
         type_=dict,
         default_value={},
@@ -117,15 +112,7 @@ _inc_quantization_config = {
             Instance of TuningCriterion class. In this class you can set strategy, strategy_kwargs,
             timeout, max_trials and objective.
         """,
-    ),
-    "evaluate_func": PassConfigParam(
-        type_=Union[Callable, str],
-        is_object=True,
-        default_value=None,
-        description="""
-            Evaluation function for Intel® Neural Compressor.
-        """,
-    ),
+    )
 }
 
 _inc_static_dataloader_config = {
@@ -169,33 +156,6 @@ _inc_static_optional_config = {
         default_value=[100],
         description="""
             Number of calibration sample.
-        """,
-    ),
-}
-
-_inc_accuracy_criterion_config = {
-    "higher_is_better": PassConfigParam(
-        type_=bool,
-        default_value=True,
-        description="""
-            This flag indicates whether the metric higher is the better.
-            Default value is True.
-        """,
-    ),
-    "criterion": PassConfigParam(
-        type_=str,
-        default_value="relative",
-        description="""
-            This flag indicates whether the metric loss is 'relative' or 'absolute'.
-            Default value is 'relative'.
-        """,
-    ),
-    "tolerable_loss": PassConfigParam(
-        type_=float,
-        default_value=0.01,
-        description="""
-            This float indicates how much metric loss we can accept.
-            Default value is 0.01.
         """,
     ),
 }
@@ -269,9 +229,7 @@ class IncQuantization(Pass):
         # common quantization config
         config.update(deepcopy(_inc_quantization_config))
 
-        # accuracy criterion and tuning criterion config
-        for key, value in deepcopy(_inc_accuracy_criterion_config).items():
-            config["accuracy_criterion"].default_value.update({key: value.default_value})
+        # tuning criterion config
         for key, value in deepcopy(_inc_tuning_criterion_config).items():
             config["tuning_criterion"].default_value.update({key: value.default_value})
 
@@ -304,11 +262,137 @@ class IncQuantization(Pass):
         # external data config
         config.update(get_external_data_config())
         return config
+    
+    def _set_eval_func(self, accuracy_metric, sub_type):
+        # set eval_func for INC according to Olive accuracy metric
+        def eval_func(model):
+            # eval_func for Intel® Neural Compressor quantization take model as input, 
+            # and return evaluation value.
+            dataloader, user_eval_func, post_func = OliveEvaluator.get_user_config(accuracy_metric)
+            if user_eval_func is not None:
+                res = user_eval_func(
+                    model, 
+                    accuracy_metric.user_config.data_dir, 
+                    accuracy_metric.user_config.batch_size,
+                    self._accelerator_spec.accelerator_type,
+                    self._accelerator_spec.execution_provider
+                )
+                return res
+            else:
+                execution_provider = onnxruntime.get_available_providers()
+                if isinstance(self._accelerator_spec.execution_provider, str):
+                    execution_provider = [self._accelerator_spec.execution_provider]
+                session = onnxruntime.InferenceSession(model.SerializeToString(), providers=execution_provider)
+                io_config = {}
+                io_config['input_names'] = [input.name for input in session.get_inputs()]
+                io_config['input_shapes'] = [input.shape for input in session.get_inputs()]
+                io_config['input_types'] = [input.type[input.type.find("(")+1:input.type.find(")")] for input in session.get_inputs()]
+                io_config['output_names'] = [output.name for output in session.get_outputs()]
+                    
+                preds = []
+                targets = []
+                output_names = io_config["output_names"]
+                for input_data, labels in dataloader:
+                    input_dict = OnnxEvaluator.format_input(input_data, io_config)
+                    res = session.run(input_feed=input_dict, output_names=None)
+                    result = torch.Tensor(res[0]) if len(output_names) == 1 else torch.Tensor(res)
+                    outputs = post_func(result) if post_func else result
+                    preds.extend(outputs.tolist())
+                    targets.extend(labels.data.tolist())
+                res = OliveEvaluator.compute_accuracy(accuracy_metric, preds, targets)
+                metric_name = sub_type.to_json()['name']
+                return res.to_json()[metric_name]['value']
+        return eval_func
+    
+    def _set_accuracy_criterion(self, sub_type):
+        # set accuracy criterion for INC according to Olive accuracy metric goal
+        goal_type = sub_type.goal.type
+        goal_value = sub_type.goal.value
+        higher_is_better = sub_type.higher_is_better
+
+        if goal_type == "max-degradation":
+            tolerable_loss = goal_value
+            criterion = "absolute"
+        elif goal_type == "min-improvement":
+            tolerable_loss = -goal_value
+            criterion = "absolute"
+        elif goal_type == "percent-max-degradation":
+            tolerable_loss = goal_value / 100
+            criterion = "relative"
+        elif goal_type == "percent-min-improvement":
+            tolerable_loss = - goal_value / 100
+            criterion = "relative"
+        else:
+            assert False, "Accuracy metric goal type for Intel® Neural Compressor quantization only suuport "\
+            "'max-degradation', 'min-improvement', 'percent-max-degradation' and 'percent-min-improvement'."
+
+        return higher_is_better, criterion, tolerable_loss
+    
+    def _set_tuning_config(self, run_config):
+        # set criterion and eval func for INC
+        # INC quantization without accuracy aware tuning situation:
+        #  1. without evaluator
+        #  2. with evaluator, without accuracy metric
+        #  3. with evaluator, with accuracy metric, without goal
+        # INC quantization with accuracy aware tuning situation:
+        #  1. with evaluator, with accuracy metric, with goal                   
+        try:
+            from neural_compressor.config import AccuracyCriterion, TuningCriterion
+        except ImportError:
+            raise ImportError(
+                "Please install `olive-ai[inc]` or `neural-compressor` to use Intel® Neural Compressor quantization"
+            )
+        
+        _evaluator_config = deepcopy(run_config)
+        
+
+        accuracy_criterion = AccuracyCriterion() 
+        tuning_criterion = TuningCriterion()
+        eval_func = None
+        accuracy_metric = None
+
+        if self._evaluator is not None:
+            metrics_name = [metric.name for metric in self._evaluator.metrics]
+            accuracy_metric_indexs = [index for index, name in enumerate(metrics_name) if name == 'accuracy']
+            if len(accuracy_metric_indexs) == 0:
+                logger.warning("There is no accuracy metric in evaluator. " \
+                               "Intel® Neural Compressor will quantize model without accuracy aware tuning. "\
+                               "Please set accuracy metric to evaluator if you want to use Intel® Neural Compressor"\
+                               "quantization with accuracy aware tuning.")
+            else:
+                accuracy_metric = self._evaluator.metrics[accuracy_metric_indexs[0]]
+        else:
+            logger.warning("'evaluator' is not set for INC Quantization Pass. "\
+                           "Intel® Neural Compressor will quantize model without accuracy aware tuning. "\
+                           "Please set 'evaluator' if you want to use Intel® Neural Compressor"\
+                           "quantization with accuracy aware tuning.")
+
+        if accuracy_metric is not None:
+            assert hasattr(accuracy_metric, 'sub_types'),  "There is no sub_type in Accuracy metric."
+            sub_type = None
+            if len(accuracy_metric.sub_types) != 0:
+                sub_type = accuracy_metric.sub_types[0]
+            if sub_type is not None and sub_type.goal is not None: 
+                eval_func = self._set_eval_func(accuracy_metric, sub_type)
+
+                higher_is_better, criterion, tolerable_loss = self._set_accuracy_criterion(sub_type)
+                accuracy_criterion = AccuracyCriterion(higher_is_better=higher_is_better, 
+                                                       criterion=criterion, 
+                                                       tolerable_loss=tolerable_loss)
+                
+                tuning_criterion = TuningCriterion(**_evaluator_config["tuning_criterion"])
+            else:
+                logger.warning("'goal' is not set for accuracy metric in evaluator. "\
+                               "Intel® Neural Compressor will quantize model without accuracy aware tuning. "\
+                               "Please set 'goal' for accuracy metric in evaluator if you want to use " \
+                               "Intel® Neural Compressor quantization with accuracy aware tuning.")
+
+        return eval_func, accuracy_criterion, tuning_criterion
 
     def _run_for_config(self, model: ONNXModel, config: Dict[str, Any], output_model_path: str) -> ONNXModel:
         try:
             from neural_compressor import quantization
-            from neural_compressor.config import AccuracyCriterion, PostTrainingQuantConfig, TuningCriterion
+            from neural_compressor.config import PostTrainingQuantConfig
         except ImportError:
             raise ImportError(
                 "Please install `olive-ai[inc]` or `neural-compressor` to use Intel® Neural Compressor quantization"
@@ -320,28 +404,27 @@ class IncQuantization(Pass):
 
         output_model_path = ONNXModel.resolve_path(output_model_path)
 
+        eval_func, accuracy_criterion, tuning_criterion = self._set_tuning_config(run_config)
+
         # keys not needed for quantization
-        accuracy_criterion = AccuracyCriterion(**run_config["accuracy_criterion"])
-        tuning_criterion = TuningCriterion(**run_config["tuning_criterion"])
         to_delete = [
             "script_dir",
             "user_script",
             "data_dir",
             "batch_size",
             "dataloader_func",
-            "accuracy_criterion",
             "tuning_criterion",
-            "evaluate_func",
             "data_config",
         ]
         to_delete += list(get_external_data_config().keys())
         for key in to_delete:
             if key in run_config:
                 del run_config[key]
-
+        
         ptq_config = PostTrainingQuantConfig(
             **run_config, accuracy_criterion=accuracy_criterion, tuning_criterion=tuning_criterion
         )
+
         inc_calib_dataloader = None
         if is_static:
             if self._user_module_loader:
@@ -353,22 +436,13 @@ class IncQuantization(Pass):
             elif self._data_config:
                 inc_calib_dataloader = self._data_config.to_data_container().create_calibration_dataloader()
 
-        eval_func = (
-            self._user_module_loader.load_object(self._fixed_params["evaluate_func"])
-            if "evaluate_func" in self._fixed_params
-            else None
-        )
-
         q_model = quantization.fit(
             model.model_path, ptq_config, calib_dataloader=inc_calib_dataloader, eval_func=eval_func
         )
         if eval_func is not None and q_model is None:
-            logger.error(
-                "Intel® Neural Compressor quantization does not "
-                "find any quantized model which meet accuracy goal. "
-                "Try to increase 'tolerable_loss' in 'accuracy_criterion' "
-                "or increase 'max_trials' in 'tuning_criterion'"
-            )
+            logger.error("Intel® Neural Compressor quantization does not "\
+                           "find any quantized model which meet accuracy goal. " \
+                           "Try to increase 'max_trials' in 'tuning_criterion'.")
         # save the model to the output path and return the model
         return model_proto_to_olive_model(q_model.model, output_model_path, config)
 
@@ -386,9 +460,7 @@ class IncDynamicQuantization(IncQuantization):
         # common quantization config
         config.update(deepcopy(_inc_quantization_config))
 
-        # accuracy criterion and tuning criterion config
-        for key, value in deepcopy(_inc_accuracy_criterion_config).items():
-            config["accuracy_criterion"].default_value.update({key: value.default_value})
+        # tuning criterion config
         for key, value in deepcopy(_inc_tuning_criterion_config).items():
             config["tuning_criterion"].default_value.update({key: value.default_value})
 
@@ -410,9 +482,7 @@ class IncStaticQuantization(IncQuantization):
         # common quantization config
         config.update(deepcopy(_inc_quantization_config))
 
-        # accuracy criterion and tuning criterion config
-        for key, value in deepcopy(_inc_accuracy_criterion_config).items():
-            config["accuracy_criterion"].default_value.update({key: value.default_value})
+        # tuning criterion config
         for key, value in deepcopy(_inc_tuning_criterion_config).items():
             config["tuning_criterion"].default_value.update({key: value.default_value})
 

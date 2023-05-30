@@ -25,21 +25,10 @@
             "metrics":[
                 {
                     "name": "accuracy",
-                    "type": "custom",
-                    "sub_types": [
-                        {"name": "accuracy_custom", "priority": 1, "higher_is_better": true}
-                    ],
+                    "type": "accuracy",
+                    "sub_types": [{"name": "accuracy_score", "priority": 1, "goal": {"type": "percent-max-degradation", "value": 0.02}}],
                     "user_config":{
-                        "user_script": "user_script.py",
-                        "evaluate_func": "eval_accuracy",
-                        "batch_size": 1
-                    }
-                },
-                {
-                    "name": "latency",
-                    "type": "latency",
-                    "sub_types": [{"name": "avg", "priority": 2}],
-                    "user_config":{
+                        "post_processing_func": "post_process",
                         "user_script": "user_script.py",
                         "dataloader_func": "create_dataloader",
                         "batch_size": 1
@@ -62,14 +51,11 @@
         "quantization": {
             "type": "IncQuantization",
             "disable_search": true,
+            "evaluator": "common_evaluator",
             "config": {
                 "approach": "SEARCHABLE_VALUES",
                 "user_script": "user_script.py",
-                "dataloader_func": "inc_glue_calibration_reader",
-                "evaluate_func": "eval_accuracy",
-                "accuracy_criterion": {
-                    "tolerable_loss": 0.02
-                }
+                "dataloader_func": "inc_glue_calibration_reader"
             }
         }
     },

@@ -15,6 +15,8 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, Eval
 from transformers.trainer_pt_utils import nested_concat
 
 from olive.model import OliveModel
+from olive.constants import Framework
+from olive.evaluator.accuracy import AccuracyScore
 
 disable_progress_bar()
 
@@ -144,29 +146,58 @@ def compute_metrics(p: EvalPrediction):
     return result
 
 
-def eval_accuracy(model, *args):
-    bert_dataset = BertDataset("Intel/bert-base-uncased-mrpc")
-    bert_dataset = IncBertDataset(bert_dataset.get_eval_dataset())
-
+def eval_accuracy(model: OliveModel, data_dir, batch_size, device, execution_providers):
+    dataloader = create_dataloader(data_dir, batch_size)
+    preds = []
+    target = []
     if isinstance(model, OliveModel):
-        _, batch_size, device, execution_providers = args
-        session = model.prepare_session(inference_settings=None, device=device, execution_providers=execution_providers)
-        bert_dataloader = DefaultDataLoader(dataset=bert_dataset, batch_size=batch_size)
+        # evaluate accuracy for OliveModel
+        sess = model.prepare_session(inference_settings=None, device=device, execution_providers=execution_providers)
+        if model.framework == Framework.ONNX:
+            input_names = [i.name for i in sess.get_inputs()]
+            output_names = [o.name for o in sess.get_outputs()]
+            for inputs, labels in dataloader:
+                if isinstance(inputs, dict):
+                    input_dict = {k: inputs[k].tolist() for k in inputs.keys()}
+                else:
+                    inputs = inputs.tolist()
+                    input_dict = dict(zip(input_names, [inputs]))
+                res = sess.run(input_feed=input_dict, output_names=None)
+                if len(output_names) == 1:
+                    result = torch.Tensor(res[0])
+                else:
+                    result = torch.Tensor(res)
+                outputs = post_process(result)
+                preds.extend(outputs.tolist())
+                target.extend(labels.data.tolist())
+        elif model.framework == Framework.PYTORCH:
+            for inputs, labels in dataloader:
+                if isinstance(inputs, dict):
+                    result = sess(**inputs)
+                else:
+                    result = sess(inputs)
+                outputs = post_process(result)
+                preds.extend(outputs.tolist())
+                target.extend(labels.data.tolist())
     else:
-        session = onnxruntime.InferenceSession(
-            model.SerializeToString(), providers=onnxruntime.get_available_providers()
-        )
-        bert_dataloader = DefaultDataLoader(dataset=bert_dataset, batch_size=1)
-    onnx_input_names = {input_key.name: idx for idx, input_key in enumerate(session.get_inputs())}
-    all_preds = None
-    all_labels = None
-    for step, (inputs, labels) in enumerate(bert_dataloader):
-        labels = np.array(labels)
-        onnx_inputs = {key: np.array(inputs[key]) for key in onnx_input_names if key in inputs}
-        preds = session.run(None, onnx_inputs)
-        if len(preds) == 1:
-            preds = preds[0]
-        all_preds = preds if all_preds is None else nested_concat(all_preds, preds, padding_index=-100)
-        all_labels = labels if all_labels is None else nested_concat(all_labels, labels, padding_index=-100)
-    metrics = compute_metrics(EvalPrediction(predictions=all_preds, label_ids=all_labels))
-    return metrics["accuracy"]
+        # evaluate accuracy for INC model
+        if isinstance(execution_providers, str):
+            execution_providers = [execution_providers]
+        sess = onnxruntime.InferenceSession(model.SerializeToString(), providers=execution_providers)
+        input_names = [i.name for i in sess.get_inputs()]
+        output_names = [o.name for o in sess.get_outputs()]
+        for inputs, labels in dataloader:
+            if isinstance(inputs, dict):
+                input_dict = {k: inputs[k].tolist() for k in inputs.keys()}
+            else:
+                inputs = inputs.tolist()
+                input_dict = dict(zip(input_names, [inputs]))
+            res = sess.run(None, input_dict)
+            if len(output_names) == 1:
+                result = torch.Tensor(res[0])
+            else:
+                result = torch.Tensor(res)
+            outputs = post_process(result)
+            preds.extend(outputs.tolist())
+            target.extend(labels.data.tolist())
+    return AccuracyScore().measure(preds, target)
