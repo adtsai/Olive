@@ -12,11 +12,10 @@ from evaluate import load
 from neural_compressor.data import DefaultDataLoader
 from torch.utils.data import Dataset
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction
-from transformers.trainer_pt_utils import nested_concat
 
-from olive.model import OliveModel
 from olive.constants import Framework
 from olive.evaluator.accuracy import AccuracyScore
+from olive.model import OliveModel
 
 disable_progress_bar()
 

@@ -25,7 +25,7 @@ User can decide to tune the model accuracy by setting accuracy metric with goal 
     "common_evaluator": {
         "metrics":[
             "name": "accuracy",
-            "sub_types": [{"name": "accuracy_score", "priority": 1, "goal": {"type": "percent-max-degradation", "value": 0.02}}],
+            "sub_types": [{"name": "accuracy_score", "priority": 1, "goal": {"type": "percent-max-degradation", "value": 2}}],
         ]
     }
 },
