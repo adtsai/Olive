@@ -3,12 +3,10 @@
 # Licensed under the MIT License.
 # --------------------------------------------------------------------------
 import numpy as np
-import onnxruntime
 import torch
 import transformers
-from datasets import load_dataset
-from datasets.utils.logging import disable_progress_bar
-from evaluate import load
+from datasets import load_dataset, load_metric
+from datasets.utils.logging import disable_progress_bar, set_verbosity_error
 from neural_compressor.data import DefaultDataLoader
 from torch.utils.data import Dataset
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction
@@ -18,6 +16,7 @@ from olive.evaluator.accuracy import AccuracyScore
 from olive.model import OliveModel
 
 disable_progress_bar()
+set_verbosity_error()
 
 
 def create_input_tensors():
@@ -136,7 +135,7 @@ def inc_glue_calibration_reader(data_dir, batch_size=1):
 
 
 def compute_metrics(p: EvalPrediction):
-    metric = load("glue", "mrpc")
+    metric = load_metric("glue", "mrpc")
     preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
     preds = np.argmax(preds, axis=1)
     result = metric.compute(predictions=preds, references=p.label_ids)
@@ -149,40 +148,8 @@ def eval_accuracy(model: OliveModel, data_dir, batch_size, device, execution_pro
     dataloader = create_dataloader(data_dir, batch_size)
     preds = []
     target = []
-    if isinstance(model, OliveModel):
-        # evaluate accuracy for OliveModel
-        sess = model.prepare_session(inference_settings=None, device=device, execution_providers=execution_providers)
-        if model.framework == Framework.ONNX:
-            input_names = [i.name for i in sess.get_inputs()]
-            output_names = [o.name for o in sess.get_outputs()]
-            for inputs, labels in dataloader:
-                if isinstance(inputs, dict):
-                    input_dict = {k: inputs[k].tolist() for k in inputs.keys()}
-                else:
-                    inputs = inputs.tolist()
-                    input_dict = dict(zip(input_names, [inputs]))
-                res = sess.run(input_feed=input_dict, output_names=None)
-                if len(output_names) == 1:
-                    result = torch.Tensor(res[0])
-                else:
-                    result = torch.Tensor(res)
-                outputs = post_process(result)
-                preds.extend(outputs.tolist())
-                target.extend(labels.data.tolist())
-        elif model.framework == Framework.PYTORCH:
-            for inputs, labels in dataloader:
-                if isinstance(inputs, dict):
-                    result = sess(**inputs)
-                else:
-                    result = sess(inputs)
-                outputs = post_process(result)
-                preds.extend(outputs.tolist())
-                target.extend(labels.data.tolist())
-    else:
-        # evaluate accuracy for INC model
-        if isinstance(execution_providers, str):
-            execution_providers = [execution_providers]
-        sess = onnxruntime.InferenceSession(model.SerializeToString(), providers=execution_providers)
+    sess = model.prepare_session(inference_settings=None, device=device, execution_providers=execution_providers)
+    if model.framework == Framework.ONNX:
         input_names = [i.name for i in sess.get_inputs()]
         output_names = [o.name for o in sess.get_outputs()]
         for inputs, labels in dataloader:
@@ -191,11 +158,20 @@ def eval_accuracy(model: OliveModel, data_dir, batch_size, device, execution_pro
             else:
                 inputs = inputs.tolist()
                 input_dict = dict(zip(input_names, [inputs]))
-            res = sess.run(None, input_dict)
+            res = sess.run(input_feed=input_dict, output_names=None)
             if len(output_names) == 1:
                 result = torch.Tensor(res[0])
             else:
                 result = torch.Tensor(res)
+            outputs = post_process(result)
+            preds.extend(outputs.tolist())
+            target.extend(labels.data.tolist())
+    elif model.framework == Framework.PYTORCH:
+        for inputs, labels in dataloader:
+            if isinstance(inputs, dict):
+                result = sess(**inputs)
+            else:
+                result = sess(inputs)
             outputs = post_process(result)
             preds.extend(outputs.tolist())
             target.extend(labels.data.tolist())

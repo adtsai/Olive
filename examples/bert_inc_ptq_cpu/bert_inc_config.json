@@ -69,6 +69,7 @@
         "host": "local_system",
         "target": "local_system",
         "clean_cache": true,
-        "cache_dir": "cache"
+        "cache_dir": "cache",
+        "output_dir": "models/bert_inc"
     }
 }

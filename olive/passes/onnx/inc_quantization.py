@@ -3,14 +3,13 @@
 # Licensed under the MIT License.
 # --------------------------------------------------------------------------
 import logging
+import tempfile
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Dict, Union
 
-import onnxruntime
-import torch
-
-from olive.evaluator.olive_evaluator import OliveEvaluator, OnnxEvaluator
+from olive.evaluator.metric import joint_metric_key
+from olive.evaluator.olive_evaluator import OliveEvaluatorFactory
 from olive.hardware.accelerator import AcceleratorSpec
 from olive.model import ONNXModel
 from olive.passes import Pass
@@ -269,44 +268,36 @@ class IncQuantization(Pass):
         def eval_func(model):
             # eval_func for Intel® Neural Compressor quantization take model as input,
             # and return evaluation value.
-            dataloader, user_eval_func, post_func = OliveEvaluator.get_user_config(accuracy_metric)
-            if user_eval_func is not None:
-                res = user_eval_func(
-                    model,
-                    accuracy_metric.user_config.data_dir,
-                    accuracy_metric.user_config.batch_size,
-                    self._accelerator_spec.accelerator_type,
-                    self._accelerator_spec.execution_provider,
-                )
-                return res
-            else:
-                execution_provider = onnxruntime.get_available_providers()
-                if isinstance(self._accelerator_spec.execution_provider, str):
-                    execution_provider = [self._accelerator_spec.execution_provider]
-                session = onnxruntime.InferenceSession(model.SerializeToString(), providers=execution_provider)
-                io_config = {}
-                io_config["input_names"] = [input.name for input in session.get_inputs()]
-                io_config["input_shapes"] = [input.shape for input in session.get_inputs()]
-                io_config["input_types"] = []
-                for input in session.get_inputs():
-                    start = input.type.find("(") + 1
-                    end = input.type.find(")")
-                    io_config["input_types"].append(input.type[start:end])
-                io_config["output_names"] = [output.name for output in session.get_outputs()]
 
-                preds = []
-                targets = []
-                output_names = io_config["output_names"]
-                for input_data, labels in dataloader:
-                    input_dict = OnnxEvaluator.format_input(input_data, io_config)
-                    res = session.run(input_feed=input_dict, output_names=None)
-                    result = torch.Tensor(res[0]) if len(output_names) == 1 else torch.Tensor(res)
-                    outputs = post_func(result) if post_func else result
-                    preds.extend(outputs.tolist())
-                    targets.extend(labels.data.tolist())
-                res = OliveEvaluator.compute_accuracy(accuracy_metric, preds, targets)
-                metric_name = sub_type.to_json()["name"]
-                return res.to_json()[metric_name]["value"]
+            # temporarily save model as onnx model
+            tmp_dir = tempfile.TemporaryDirectory(prefix="olive_tmp")
+            tmp_model_path = Path(tmp_dir.name) / "tmp_model.onnx"
+
+            # save as olive onnx model
+            # TODO: investigate why save_as_external_data = True is not working
+            # it cannot find the external data file
+            olive_model = model_proto_to_olive_model(
+                model,
+                tmp_model_path,
+                {
+                    "save_as_external_data": False,
+                    "all_tensors_to_one_file": True,
+                    "external_data_name": None,
+                },
+            )
+
+            # create evaluator for model
+            evaluator = OliveEvaluatorFactory.create_evaluator_for_model(olive_model)
+
+            # evaluate model
+            result = evaluator.evaluate(
+                olive_model,
+                [accuracy_metric],
+                self._accelerator_spec.accelerator_type,
+                [self._accelerator_spec.execution_provider],
+            )
+            joint_key = joint_metric_key(accuracy_metric.name, sub_type.name)
+            return result[joint_key].value
 
         return eval_func
 
