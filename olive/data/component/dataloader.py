@@ -97,7 +97,7 @@ def default_snpe_dataloader(_dataset, snpe_model, batch_size=None):
                 time_permutation = [1, 0] + list(range(2, len(source_shape)))
                 if source_shape == target_shape:
                     permutation = None  # no permutation needed
-                if target_shape == [source_shape[idx] for idx in channel_permutation]:
+                elif target_shape == [source_shape[idx] for idx in channel_permutation]:
                     permutation = channel_permutation
                 elif target_shape == [source_shape[idx] for idx in time_permutation]:
                     permutation = time_permutation

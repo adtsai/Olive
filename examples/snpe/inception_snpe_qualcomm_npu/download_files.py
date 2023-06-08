@@ -13,7 +13,6 @@ from PIL import Image
 from torchvision import transforms
 
 from olive.common.utils import run_subprocess
-from olive.snpe.utils.input_list import create_input_list
 
 
 def download_model():
@@ -59,12 +58,16 @@ def download_data():
 
     input_data_path = data_dir / "input"
     input_data_path.mkdir(parents=True, exist_ok=True)
+    input_order = []
     for jpeg in jpegs[:20]:
         out = preprocess_image(jpeg)
-        out.tofile((input_data_path / jpeg.name).with_suffix(".raw"))
+        input_file_name = (input_data_path / jpeg.name).with_suffix(".raw")
+        out.tofile(input_file_name)
+        input_order.append(input_file_name.name)
 
-    # create input list
-    create_input_list(str(data_dir), ["input"])
+    # create input order file
+    with open(data_dir / "input_order.txt", "w") as f:
+        f.write("\n".join(input_order))
 
     # create labels file
     labels = np.arange(1, 21)

@@ -14,4 +14,4 @@ def create_eval_dataloader(data_dir, batch_size):
 
 
 def post_process(output):
-    return output["results"]["InceptionV3/Predictions/Reshape_1"].squeeze().argmax(axis=1)
+    return output["results"]["InceptionV3/Predictions/Reshape_1:0"].squeeze(1).argmax(axis=1)

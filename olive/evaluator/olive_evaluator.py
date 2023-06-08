@@ -607,7 +607,7 @@ class SNPEEvaluator(OliveEvaluator, framework=Framework.SNPE):
         data_dir, input_data, _ = next(iter(dataloader))
         total_runs = warmup_num + repeat_test_num
         results = session(input_data, data_dir, runs=total_runs, sleep=sleep_num)
-        latencies = results["latencies"]["total_inference_time"][warmup_num]
+        latencies = results["latencies"]["total_inference_time"][warmup_num:]
 
         return OliveEvaluator.compute_latency(metric, latencies)
 

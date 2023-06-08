@@ -54,11 +54,6 @@ class SNPEConversion(Pass):
                 description="List of input shapes. Must be the same length as input_names.",
             ),
             "output_names": PassConfigParam(type_=List[str], required=True, description="List of output names."),
-            "output_shapes": PassConfigParam(
-                type_=List[List[int]],
-                required=True,
-                description="List of output shapes. Must be the same length as output_names.",
-            ),
             "input_types": PassConfigParam(
                 type_=List[Union[str, None]],
                 default_value=None,
