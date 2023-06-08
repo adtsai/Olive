@@ -3,6 +3,7 @@
 # Licensed under the MIT License.
 # --------------------------------------------------------------------------
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -10,6 +11,8 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 from olive.data.registry import Registry
+
+logger = logging.getLogger(__name__)
 
 
 @Registry.register_dataloader()
@@ -61,6 +64,7 @@ def default_snpe_dataloader(_dataset, snpe_model, batch_size=None):
 
     class _SNPEProcessedDataLoader(SNPEProcessedDataLoader):
         def __init__(self, dataset, snpe_model, batch_size=None):
+            logger.debug("Creating SNPEProcessedDataLoader from dataset")
             target_io_config = snpe_model.io_config
             input_specs = {}
             for input_name, input_shape in zip(target_io_config["input_names"], target_io_config["input_shapes"]):
@@ -78,9 +82,13 @@ def default_snpe_dataloader(_dataset, snpe_model, batch_size=None):
                     raise ValueError(f"Input name {input_name} not found in dataset")
                 input_specs[input_name]["source_name"] = source_name
 
-            # source input_shapes
+            # source input_shapes and permutations
             for input_name, input_spec in input_specs.items():
+                # get source shape
                 source_shape = list(input_data[input_spec["source_name"]].shape)
+                input_specs[input_name]["source_shape"] = source_shape
+
+                # get permutation from source shape to target shape
                 target_shape = input_spec["target_shape"]
                 assert len(source_shape) == len(
                     target_shape
@@ -107,8 +115,8 @@ def default_snpe_dataloader(_dataset, snpe_model, batch_size=None):
                         f" shape {target_shape}"
                     )
 
-                input_specs[input_name]["source_shape"] = source_shape
                 input_specs[input_name]["permutation"] = permutation
+            logger.debug(f"Input specs: {input_specs}")
 
             self.tmp_main_dir = tempfile.TemporaryDirectory(prefix="olive_tmp_")
             data_dir = Path(self.tmp_main_dir.name) / "data"

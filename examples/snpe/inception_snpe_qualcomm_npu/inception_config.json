@@ -66,10 +66,16 @@
                 "input_shapes": [[1, 299, 299, 3]],
                 "output_names": ["InceptionV3/Predictions/Reshape_1"]
             }
+        },
+        "snpe_quantization": {
+            "type": "SNPEQuantization",
+            "config": {
+                "enable_htp": true,
+                "data_config": "raw_data"
+            }
         }
     },
     "engine": {
-        "log_severity_level": 1,
         "search_strategy": false,
         "evaluator": "common_evaluator",
         "cache_dir": "cache",
