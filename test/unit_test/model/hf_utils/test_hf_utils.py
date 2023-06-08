@@ -4,7 +4,7 @@
 # --------------------------------------------------------------------------
 import torch
 
-from olive.model.hf.hf_utils import load_huggingface_model_from_model_class, load_huggingface_model_from_task
+from olive.model.hf_utils import load_huggingface_model_from_model_class, load_huggingface_model_from_task
 
 
 def test_load_huggingface_model_from_task():

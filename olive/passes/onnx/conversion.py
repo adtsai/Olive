@@ -13,7 +13,7 @@ from olive.common.config_utils import validate_config
 from olive.common.utils import tensor_data_to_device
 from olive.hardware.accelerator import AcceleratorSpec
 from olive.model import CompositeOnnxModel, ONNXModel, PyTorchModel
-from olive.model.hf.hf_utils import get_hf_model_io_config
+from olive.model.hf_utils import get_hf_model_io_config
 from olive.model.model_config import IOConfig
 from olive.passes import Pass
 from olive.passes.onnx.common import get_external_data_config, model_proto_to_olive_model
