@@ -14,7 +14,8 @@
                 "input_names": ["input"],
                 "input_shapes": [[1, 299, 299, 3]],
                 "input_order_file": "input_order.txt",
-                "annotations_file": "labels.npy"
+                "annotations_file": "labels.npy",
+                "batch_size": 7
             }
         }
     },

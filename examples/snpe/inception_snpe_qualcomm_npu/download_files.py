@@ -8,11 +8,24 @@ from pathlib import Path
 from urllib import request
 
 import numpy as np
-from inception_utils import get_directories
 from PIL import Image
 from torchvision import transforms
 
 from olive.common.utils import run_subprocess
+
+
+def get_directories():
+    current_dir = Path(__file__).resolve().parent
+
+    # models directory for resnet sample
+    models_dir = current_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    # data directory for resnet sample
+    data_dir = current_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    return current_dir, models_dir, data_dir
 
 
 def download_model():
