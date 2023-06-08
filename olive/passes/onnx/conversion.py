@@ -64,7 +64,7 @@ class OnnxConversion(Pass):
         dummy_inputs = model.get_dummy_inputs()
 
         # get input and output names, and dynamic axes
-        if model.hf_config and not model.hf_config.use_custom_implementation:
+        if model.hf_config and not model.hf_config.components:
             io_config = get_hf_model_io_config(
                 model.hf_config.model_name, model.hf_config.task, model.hf_config.feature
             )
