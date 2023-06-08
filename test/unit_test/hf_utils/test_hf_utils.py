@@ -4,11 +4,7 @@
 # --------------------------------------------------------------------------
 import torch
 
-<<<<<<< Updated upstream:test/unit_test/hf_utils/test_hf_utils.py
-from olive.hf_utils import load_huggingface_model_from_model_class, load_huggingface_model_from_task
-=======
 from olive.model.hf_utils import load_huggingface_model_from_model_class, load_huggingface_model_from_task
->>>>>>> Stashed changes:test/unit_test/model/hf_utils/test_hf_utils.py
 
 
 def test_load_huggingface_model_from_task():
