@@ -1,0 +1,13 @@
+D:\onnxmodels\vision\classification\alexnet\model\bvlcalexnet-12.onnx
+D:\onnxmodels\vision\classification\caffenet\model\caffenet-12.onnx
+D:\onnxmodels\vision\classification\efficientnet-lite4\model\efficientnet-lite4-11.onnx
+D:\onnxmodels\vision\object_detection_segmentation\faster-rcnn\model\FasterRCNN-12.onnx
+D:\onnxmodels\vision\object_detection_segmentation\fcn\model\fcn-resnet50-12.onnx
+D:\onnxmodels\vision\classification\inception_and_googlenet\inception_v1\model\inception-v1-12.onnx
+D:\onnxmodels\vision\object_detection_segmentation\mask-rcnn\model\MaskRCNN-12.onnx
+D:\onnxmodels\vision\classification\resnet\model\resnet50-v1-12.onnx
+D:\onnxmodels\vision\classification\shufflenet\model\shufflenet-v2-12.onnx
+D:\onnxmodels\vision\classification\squeezenet\model\squeezenet1.0-12.onnx
+D:\onnxmodels\vision\object_detection_segmentation\ssd-mobilenetv1\model\ssd_mobilenet_v1_12.onnx
+D:\onnxmodels\vision\object_detection_segmentation\ssd\model\ssd-12.onnx
+D:\onnxmodels\vision\object_detection_segmentation\yolov3\model\yolov3-12.onnx

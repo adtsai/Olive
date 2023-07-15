@@ -1,0 +1,46 @@
+{
+    "input_model": {
+        "type": "ONNXModel",
+        "config": {
+            "model_path": %%MODEL_PATH%%
+        }
+    },
+    "systems": {
+        "local_system": {"type": "LocalSystem"}
+    },
+    "evaluators": {
+        "common_evaluator": {
+            "metrics": [
+                {
+                    "name": "latency",
+                    "type": "latency",
+                    "sub_types": [
+                        {"name": "avg", "priority": 1},
+                        {"name": "max"},
+                        {"name": "min"}
+                    ],
+                    "user_config": {
+                        "user_script": "user_script.py",
+                        "dataloader_func": "create_dataloader",
+                        "batch_size": 1
+                    }
+                }
+            ]
+        }
+    },
+    "passes": {
+        "float16_conversion": {
+            "type": "OnnxFloatToFloat16",
+            "output_name": "out"
+        }
+    },
+    "engine": {
+        "log_severity_level": 0,
+        "search_strategy": null,
+        "evaluator": "common_evaluator",
+        "host": "local_system",
+        "target": "local_system",
+        "clean_cache": true,
+        "cache_dir": "cache"
+    }
+}
